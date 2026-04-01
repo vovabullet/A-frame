@@ -1,0 +1,995 @@
+<!DOCTYPE html>
+<!--
+  ╔══════════════════════════════════════════════════════════════════════╗
+  ║  МИНИ-ИГРА "ОХОТА ЗА ЗВЁЗДАМИ" — A-Frame                           ║
+  ║  Лаб/работа 6: разработка интерактивной VR-сцены                   ║
+  ║                                                                      ║
+  ║  Использованные возможности A-Frame:                                 ║
+  ║  • Трансформация предков и потомков (родитель → потомок)             ║
+  ║  • a-entity, a-sky, текстуры, 3D GLTF-модель, изображение           ║
+  ║  • Аудио, текст, земля, свет, камера                                ║
+  ║  • Анимации, интерактивность, анимации по событию                   ║
+  ║  • Физика (aframe-physics-system)                                   ║
+  ║  • Счётчик очков, экран результатов                                 ║
+  ╚══════════════════════════════════════════════════════════════════════╝
+-->
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Охота за звёздами — A-Frame мини-игра</title>
+
+  <!-- ▸ Основная библиотека A-Frame (WebVR/WebXR фреймворк) -->
+  <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
+
+  <!-- ▸ Физический движок для A-Frame (gravity, dynamic-body, static-body) -->
+  <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-physics-system@v4.2.2/dist/aframe-physics-system.js"></script>
+
+  <!-- ══════════════════════════════════════════════════
+       CSS: Стили HTML-оверлея (HUD, экраны)
+       Оверлей лежит поверх <a-scene> через position:fixed
+  ══════════════════════════════════════════════════ -->
+  <style>
+    /* Общий сброс отступов браузера */
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { overflow: hidden; background: #000; }
+
+    /* ── Панель очков (HUD) ──────────────────────────────── */
+    #hud {
+      position: fixed;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 999;
+      color: #fff;
+      font-family: 'Arial', sans-serif;
+      font-size: 22px;
+      font-weight: bold;
+      text-shadow: 1px 1px 4px rgba(0,0,0,0.9);
+      background: rgba(0, 0, 0, 0.45);
+      padding: 10px 24px;
+      border-radius: 12px;
+      border: 1px solid rgba(255,215,0,0.4);
+      pointer-events: none;           /* Не блокирует клики на сцену */
+      user-select: none;
+    }
+
+    /* ── Прогресс-полоска под очками ─────────────────────── */
+    #progress-bar-wrap {
+      width: 100%;
+      height: 6px;
+      background: rgba(255,255,255,0.2);
+      border-radius: 3px;
+      margin-top: 6px;
+      overflow: hidden;
+    }
+    #progress-bar {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #FFD700, #FF8C00);
+      border-radius: 3px;
+      transition: width 0.4s ease;
+    }
+
+    /* ── Экран завершения игры ───────────────────────────── */
+    #game-over {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.88);
+      z-index: 1000;
+      color: #fff;
+      font-family: 'Arial', sans-serif;
+      text-align: center;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+    /* Видим экран завершения только когда display:flex */
+    #game-over.visible { display: flex; }
+
+    #game-over h1 {
+      font-size: 52px;
+      color: #FFD700;
+      text-shadow: 0 0 20px #FF8C00, 0 0 40px #FF4500;
+      margin-bottom: 16px;
+    }
+    #game-over .subtitle {
+      font-size: 22px;
+      color: #ccc;
+      margin-bottom: 10px;
+    }
+    #game-over .final-score-label {
+      font-size: 30px;
+      color: #FFD700;
+      margin: 8px 0 24px;
+    }
+    /* Кнопка рестарта */
+    #restart-btn {
+      background: linear-gradient(135deg, #FFD700, #FF8C00);
+      color: #000;
+      border: none;
+      padding: 14px 36px;
+      font-size: 20px;
+      font-weight: bold;
+      cursor: pointer;
+      border-radius: 10px;
+      transition: transform 0.15s, box-shadow 0.15s;
+      box-shadow: 0 4px 16px rgba(255,140,0,0.5);
+    }
+    #restart-btn:hover {
+      transform: scale(1.07);
+      box-shadow: 0 6px 24px rgba(255,140,0,0.7);
+    }
+
+    /* ── Подсказка управления (маленькая, снизу) ────────── */
+    #hint {
+      position: fixed;
+      bottom: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 998;
+      color: rgba(255,255,255,0.65);
+      font-family: Arial, sans-serif;
+      font-size: 13px;
+      pointer-events: none;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════════════
+     HTML-ОВЕРЛЕЙ: Счётчик очков (HUD)
+     Отображается поверх 3D-сцены всегда
+══════════════════════════════════════════════════════ -->
+<div id="hud">
+  ⭐ Очки: <span id="score-display">0</span>
+  &nbsp;|&nbsp;
+  Собрано: <span id="collected-display">0</span> / <span id="total-display">0</span>
+  <div id="progress-bar-wrap">
+    <div id="progress-bar"></div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════
+     HTML-ОВЕРЛЕЙ: Экран завершения игры
+     Показывается после сбора всех звёзд
+══════════════════════════════════════════════════════ -->
+<div id="game-over">
+  <h1>🎉 Победа!</h1>
+  <p class="subtitle">Вы собрали все звёзды!</p>
+  <p class="final-score-label">Ваш счёт: <span id="final-score">0</span> очков</p>
+  <button id="restart-btn" onclick="restartGame()">🔄 Играть снова</button>
+</div>
+
+<!-- ══════════════════════════════════════════════════════
+     Подсказка управления
+══════════════════════════════════════════════════════ -->
+<div id="hint">WASD — движение &nbsp;|&nbsp; Мышь — поворот &nbsp;|&nbsp; Наведи взгляд на звезду (1.5 с) или кликни</div>
+
+
+<!-- ╔══════════════════════════════════════════════════════════════════╗
+     ║                    ГЛАВНАЯ A-FRAME СЦЕНА                        ║
+     ║                                                                  ║
+     ║  physics="gravity: -9.8"  — физика с силой тяжести              ║
+     ║  fog                      — атмосферный туман                    ║
+     ║  shadow                   — тени (PCF-soft)                      ║
+     ╚══════════════════════════════════════════════════════════════════╝ -->
+<a-scene
+  id="main-scene"
+  physics="gravity: -9.8; debug: false; iterations: 10"
+  fog="type: exponential; color: #6aadff; density: 0.012"
+  shadow="type: pcfsoft"
+  renderer="colorManagement: true; physicallyCorrectLights: true"
+  loading-screen="dotsColor: gold; backgroundColor: #001">
+
+  <!-- ══════════════════════════════════════════════════════
+       БЛОК ПРЕДЗАГРУЗКИ РЕСУРСОВ (Asset Management System)
+       A-Frame загружает все ресурсы ДО старта сцены
+  ══════════════════════════════════════════════════════ -->
+  <a-assets timeout="10000">
+
+    <!-- Текстура земли (трава) — повторяется по UV -->
+    <img
+      id="tex-grass"
+      src="https://cdn.aframe.io/a-painter/images/sky.jpg"
+      crossorigin="anonymous">
+
+    <!-- Текстура неба — 360°-панорама -->
+    <img
+      id="tex-sky"
+      src="https://cdn.aframe.io/360-image-gallery-boilerplate/img/sechelt.jpg"
+      crossorigin="anonymous">
+
+    <!-- Изображение золотой звезды (2D-спрайт в сцене) -->
+    <img
+      id="img-star"
+      src="https://upload.wikimedia.org/wikipedia/commons/thumb/2/29/Gold_star.svg/240px-Gold_star.svg.png"
+      crossorigin="anonymous">
+
+    <!--
+      3D-модель утки — официальная тестовая модель Khronos Group
+      (Duck), распространяемая в формате glTF 2.0.
+      glTF (GL Transmission Format) — стандартный формат экспорта
+      из Blender: File → Export → glTF 2.0 (.glb/.gltf).
+    -->
+    <a-asset-item
+      id="model-duck"
+      src="https://cdn.aframe.io/test-models/models/duck/duck.gltf">
+    </a-asset-item>
+
+    <!-- Фоновая атмосферная музыка -->
+    <audio
+      id="audio-bg"
+      src="https://cdn.aframe.io/basic-guide/audio/backgroundnoise.wav"
+      preload="auto"
+      loop="true">
+    </audio>
+
+  </a-assets>
+
+
+  <!-- ══════════════════════════════════════════════════════
+       НЕБО (a-sky)
+       Создаёт сферический скайбокс вокруг всей сцены.
+       src задаёт 360°-текстуру; rotation смещает "горизонт".
+  ══════════════════════════════════════════════════════ -->
+  <a-sky
+    id="game-sky"
+    src="#tex-sky"
+    rotation="0 -90 0">
+  </a-sky>
+
+
+  <!-- ══════════════════════════════════════════════════════
+       ОСВЕЩЕНИЕ
+       Комбинация трёх типов светильников:
+         • ambient     — рассеянный (подсвечивает тени)
+         • directional — направленный (имитирует солнце)
+         • point       — точечный (декоративный пульс)
+  ══════════════════════════════════════════════════════ -->
+
+  <!-- Рассеянный свет — равномерно освещает всю сцену -->
+  <a-light
+    type="ambient"
+    color="#aac0dd"
+    intensity="0.55">
+  </a-light>
+
+  <!-- Направленный свет — основное «солнечное» освещение + тени -->
+  <a-light
+    type="directional"
+    color="#ffffff"
+    intensity="0.85"
+    position="5 12 -3"
+    cast-shadow="true"
+    shadow-camera-near="0.1"
+    shadow-camera-far="50"
+    shadow-camera-left="-20"
+    shadow-camera-right="20"
+    shadow-camera-top="20"
+    shadow-camera-bottom="-20">
+  </a-light>
+
+  <!-- Точечный свет в центре арены с анимацией пульсации -->
+  <a-light
+    id="point-light"
+    type="point"
+    color="#FFD700"
+    intensity="0.7"
+    position="0 6 -4"
+    distance="22"
+    decay="2"
+    animation__pulse="
+      property: intensity;
+      from: 0.4;
+      to: 0.9;
+      dur: 1800;
+      dir: alternate;
+      loop: true;
+      easing: easeInOutSine">
+  </a-light>
+
+
+  <!-- ══════════════════════════════════════════════════════
+       ЗЕМЛЯ (Ground)
+       a-plane — бесконечная плоскость, повёрнутая горизонтально.
+       static-body — статическое физическое тело (не движется).
+       repeat="8 8" — мозаичное повторение текстуры.
+  ══════════════════════════════════════════════════════ -->
+  <a-plane
+    id="ground"
+    position="0 0 0"
+    rotation="-90 0 0"
+    width="50"
+    height="50"
+    src="#tex-grass"
+    repeat="8 8"
+    shadow="receive: true"
+    static-body>
+  </a-plane>
+
+
+  <!-- ══════════════════════════════════════════════════════
+       3D МОДЕЛЬ (GLTF — Blender-экспорт)
+       gltf-model="#model-duck" — загружает GLTF-файл.
+       Модель "Утка" (Duck) создана в Blender и экспортирована
+       в формат glTF 2.0 (бинарный или текстовый .gltf).
+       scale — масштаб модели (Blender-единицы ≠ A-Frame-метры).
+  ══════════════════════════════════════════════════════ -->
+  <a-entity
+    id="duck-entity"
+    gltf-model="#model-duck"
+    position="6 0 -6"
+    scale="0.01 0.01 0.01"
+    rotation="0 -30 0"
+    shadow="cast: true; receive: true"
+    animation__spin="
+      property: rotation;
+      from: 0 -30 0;
+      to: 0 330 0;
+      dur: 9000;
+      loop: true;
+      easing: linear">
+  </a-entity>
+
+
+  <!-- ══════════════════════════════════════════════════════
+       ИЗОБРАЖЕНИЕ В 3D-ПРОСТРАНСТВЕ (a-image / a-entity + material)
+       Отображает 2D-спрайт (PNG) как плоскость в сцене.
+       look-at="[camera]" — всегда повёрнут к игроку.
+  ══════════════════════════════════════════════════════ -->
+  <a-image
+    id="star-sign"
+    src="#img-star"
+    position="0 3.2 -5"
+    width="1.2"
+    height="1.2"
+    look-at="#main-camera"
+    animation__blink="
+      property: material.opacity;
+      from: 1;
+      to: 0.25;
+      dur: 900;
+      dir: alternate;
+      loop: true;
+      easing: easeInOutSine">
+  </a-image>
+
+
+  <!-- ══════════════════════════════════════════════════════
+       ТРАНСФОРМАЦИЯ ПРЕДКОВ И ПОТОМКОВ
+       ─────────────────────────────────────────────────────
+       #game-container — КОРНЕВОЙ РОДИТЕЛЬ всего игрового мира.
+       Все вложенные сущности наследуют его позицию/поворот/масштаб.
+       Изменив position/rotation у #game-container, мы сдвинем весь мир.
+  ══════════════════════════════════════════════════════ -->
+  <a-entity id="game-container" position="0 0 0" rotation="0 0 0">
+
+    <!-- ───────────────────────────────────────────────────
+         ЦЕНТРАЛЬНАЯ ПЛАТФОРМА (предок → три потомка)
+         #platform-group наследует смещение game-container.
+         Внутри него: основание + колонна + шар-вершина.
+    ─────────────────────────────────────────────────────── -->
+    <a-entity id="platform-group" position="0 0 -3">
+
+      <!-- Потомок 1: круглое основание платформы (static-body) -->
+      <a-cylinder
+        id="platform-base"
+        position="0 0.15 0"
+        radius="2.2"
+        height="0.3"
+        color="#8B6914"
+        metalness="0.3"
+        roughness="0.7"
+        shadow="cast: true; receive: true"
+        static-body>
+      </a-cylinder>
+
+      <!-- Потомок 2: колонна в центре (наследует горизонталь от platform-group) -->
+      <a-cylinder
+        id="platform-pillar"
+        position="0 1 0"
+        radius="0.12"
+        height="1.9"
+        color="#A07830"
+        shadow="cast: true">
+      </a-cylinder>
+
+      <!-- Потомок 3: шар-маяк (дочерний к platform-group) с анимацией парения -->
+      <a-sphere
+        id="platform-top-orb"
+        position="0 2.05 0"
+        radius="0.28"
+        color="#FFD700"
+        metalness="0.9"
+        roughness="0.1"
+        emissive="#FFB300"
+        emissive-intensity="0.5"
+        shadow="cast: true"
+        animation__float="
+          property: position;
+          from: 0 2.05 0;
+          to:   0 2.45 0;
+          dur: 1600;
+          dir: alternate;
+          loop: true;
+          easing: easeInOutSine">
+      </a-sphere>
+
+    </a-entity><!-- /platform-group -->
+
+
+    <!-- ══════════════════════════════════════════════════
+         ДЕРЕВЬЯ (предок → потомки)
+         Каждое дерево — родительский <a-entity>.
+         Ствол и ярусы кроны — потомки, унаследующие позицию дерева.
+         Перемещая родителя, мы двигаем дерево целиком.
+    ══════════════════════════════════════════════════ -->
+
+    <!-- Дерево 1 (правая сторона) -->
+    <a-entity id="tree-1" position="7 0 -5">
+      <!-- Потомок: ствол -->
+      <a-cylinder position="0 1.0 0" radius="0.18" height="2.0"
+        color="#6B3A1A" shadow="cast:true; receive:true" static-body>
+      </a-cylinder>
+      <!-- Потомок: нижний ярус кроны -->
+      <a-cone position="0 2.8 0" radius-bottom="1.5" radius-top="0.0"
+        height="2.2" color="#1B5E20" shadow="cast:true">
+      </a-cone>
+      <!-- Потомок: средний ярус кроны -->
+      <a-cone position="0 3.9 0" radius-bottom="1.1" radius-top="0.0"
+        height="1.8" color="#2E7D32" shadow="cast:true">
+      </a-cone>
+      <!-- Потомок: верхний ярус кроны -->
+      <a-cone position="0 4.7 0" radius-bottom="0.7" radius-top="0.0"
+        height="1.4" color="#388E3C" shadow="cast:true">
+      </a-cone>
+    </a-entity>
+
+    <!-- Дерево 2 (левая сторона) -->
+    <a-entity id="tree-2" position="-7 0 -6">
+      <a-cylinder position="0 1.0 0" radius="0.18" height="2.0"
+        color="#6B3A1A" shadow="cast:true; receive:true" static-body>
+      </a-cylinder>
+      <a-cone position="0 2.8 0" radius-bottom="1.5" radius-top="0.0"
+        height="2.2" color="#1A237E" shadow="cast:true">
+      </a-cone>
+      <a-cone position="0 3.9 0" radius-bottom="1.1" radius-top="0.0"
+        height="1.8" color="#283593" shadow="cast:true">
+      </a-cone>
+      <a-cone position="0 4.7 0" radius-bottom="0.7" radius-top="0.0"
+        height="1.4" color="#3949AB" shadow="cast:true">
+      </a-cone>
+    </a-entity>
+
+    <!-- Дерево 3 (задняя левая) -->
+    <a-entity id="tree-3" position="-4 0 -10">
+      <a-cylinder position="0 1.0 0" radius="0.18" height="2.0"
+        color="#6B3A1A" shadow="cast:true; receive:true" static-body>
+      </a-cylinder>
+      <a-cone position="0 2.8 0" radius-bottom="1.5" radius-top="0.0"
+        height="2.2" color="#004D40" shadow="cast:true">
+      </a-cone>
+      <a-cone position="0 3.9 0" radius-bottom="1.1" radius-top="0.0"
+        height="1.8" color="#00695C" shadow="cast:true">
+      </a-cone>
+      <a-cone position="0 4.7 0" radius-bottom="0.7" radius-top="0.0"
+        height="1.4" color="#00796B" shadow="cast:true">
+      </a-cone>
+    </a-entity>
+
+    <!-- Дерево 4 (задняя правая) -->
+    <a-entity id="tree-4" position="5 0 -11">
+      <a-cylinder position="0 1.0 0" radius="0.18" height="2.0"
+        color="#6B3A1A" shadow="cast:true; receive:true" static-body>
+      </a-cylinder>
+      <a-cone position="0 2.8 0" radius-bottom="1.5" radius-top="0.0"
+        height="2.2" color="#BF360C" shadow="cast:true">
+      </a-cone>
+      <a-cone position="0 3.9 0" radius-bottom="1.1" radius-top="0.0"
+        height="1.8" color="#D84315" shadow="cast:true">
+      </a-cone>
+      <a-cone position="0 4.7 0" radius-bottom="0.7" radius-top="0.0"
+        height="1.4" color="#E64A19" shadow="cast:true">
+      </a-cone>
+    </a-entity>
+
+
+    <!-- ══════════════════════════════════════════════════
+         КОЛЛЕКЦИОННЫЕ ОБЪЕКТЫ — «ЗВЁЗДЫ»
+         ─────────────────────────────────────────────────
+         Каждая звезда — группа (предок + потомок):
+           • <a-entity class="star-group"> — родитель-группа
+           • <a-torus>                     — кольцо-орбита (потомок)
+           • <a-sphere class="collectible">— шар-звезда   (потомок)
+
+         Анимации по событию (begin: mouseenter / mouseleave / click):
+           animation__hover  — увеличивается при наведении
+           animation__unhover — уменьшается при уходе курсора
+           animation__collect — исчезает при сборе
+
+         Физика: collectible не имеют dynamic-body
+         (они «висят» в воздухе — игровая условность).
+    ══════════════════════════════════════════════════ -->
+
+    <!-- ── Звезда 1: жёлтая, 10 очков ──────────────────── -->
+    <a-entity id="star-group-1" class="star-group" position="2.5 1.5 -3.5">
+
+      <!-- Кольцо-орбита (предок для sphere, вращается само) -->
+      <a-torus
+        radius="0.38" radius-tubular="0.025"
+        color="#FFD700" opacity="0.7"
+        animation__spin="
+          property: rotation;
+          from: 0 0 0;
+          to: 360 360 0;
+          dur: 3200;
+          loop: true;
+          easing: linear">
+      </a-torus>
+
+      <!-- Шар-звезда (потомок, наследует позицию группы) -->
+      <a-sphere
+        id="star-1"
+        class="collectible"
+        radius="0.22"
+        color="#FFD700"
+        emissive="#FF8F00"
+        emissive-intensity="0.6"
+        shadow="cast: true"
+        data-score="10"
+        animation__float="
+          property: position;
+          from: 0 0 0;
+          to: 0 0.35 0;
+          dur: 1200;
+          dir: alternate;
+          loop: true;
+          easing: easeInOutSine"
+        animation__hover="
+          property: scale;
+          to: 1.6 1.6 1.6;
+          startEvents: mouseenter;
+          dur: 200;
+          easing: easeOutBack"
+        animation__unhover="
+          property: scale;
+          to: 1 1 1;
+          startEvents: mouseleave;
+          dur: 200;
+          easing: easeInBack">
+      </a-sphere>
+    </a-entity>
+
+    <!-- ── Звезда 2: розовая, 10 очков ──────────────────── -->
+    <a-entity id="star-group-2" class="star-group" position="-2.5 1.8 -5">
+      <a-torus radius="0.38" radius-tubular="0.025" color="#FF69B4" opacity="0.7"
+        animation__spin="property: rotation; from: 0 0 0; to: 0 360 360; dur: 4000; loop: true; easing: linear">
+      </a-torus>
+      <a-sphere id="star-2" class="collectible" radius="0.22"
+        color="#FF69B4" emissive="#C2185B" emissive-intensity="0.6"
+        shadow="cast: true" data-score="10"
+        animation__float="property: position; from: 0 0 0; to: 0 0.4 0; dur: 1500; dir: alternate; loop: true; easing: easeInOutSine"
+        animation__hover="property: scale; to: 1.6 1.6 1.6; startEvents: mouseenter; dur: 200; easing: easeOutBack"
+        animation__unhover="property: scale; to: 1 1 1; startEvents: mouseleave; dur: 200; easing: easeInBack">
+      </a-sphere>
+    </a-entity>
+
+    <!-- ── Звезда 3: голубая, 10 очков ──────────────────── -->
+    <a-entity id="star-group-3" class="star-group" position="3.5 1.2 -7">
+      <a-torus radius="0.38" radius-tubular="0.025" color="#00BCD4" opacity="0.7"
+        animation__spin="property: rotation; from: 0 0 0; to: 0 360 -360; dur: 3600; loop: true; easing: linear">
+      </a-torus>
+      <a-sphere id="star-3" class="collectible" radius="0.22"
+        color="#00BCD4" emissive="#006064" emissive-intensity="0.6"
+        shadow="cast: true" data-score="10"
+        animation__float="property: position; from: 0 0 0; to: 0 0.3 0; dur: 1800; dir: alternate; loop: true; easing: easeInOutSine"
+        animation__hover="property: scale; to: 1.6 1.6 1.6; startEvents: mouseenter; dur: 200; easing: easeOutBack"
+        animation__unhover="property: scale; to: 1 1 1; startEvents: mouseleave; dur: 200; easing: easeInBack">
+      </a-sphere>
+    </a-entity>
+
+    <!-- ── Звезда 4: фиолетовая, 15 очков ───────────────── -->
+    <a-entity id="star-group-4" class="star-group" position="-1 2.0 -8">
+      <a-torus radius="0.38" radius-tubular="0.025" color="#9C27B0" opacity="0.7"
+        animation__spin="property: rotation; from: 0 0 0; to: 360 360 360; dur: 5000; loop: true; easing: linear">
+      </a-torus>
+      <a-sphere id="star-4" class="collectible" radius="0.22"
+        color="#9C27B0" emissive="#4A148C" emissive-intensity="0.6"
+        shadow="cast: true" data-score="15"
+        animation__float="property: position; from: 0 0 0; to: 0 0.28 0; dur: 2000; dir: alternate; loop: true; easing: easeInOutSine"
+        animation__hover="property: scale; to: 1.6 1.6 1.6; startEvents: mouseenter; dur: 200; easing: easeOutBack"
+        animation__unhover="property: scale; to: 1 1 1; startEvents: mouseleave; dur: 200; easing: easeInBack">
+      </a-sphere>
+    </a-entity>
+
+    <!-- ── Звезда 5: красная, 20 очков ──────────────────── -->
+    <a-entity id="star-group-5" class="star-group" position="0 2.2 -9">
+      <a-torus radius="0.38" radius-tubular="0.025" color="#F44336" opacity="0.7"
+        animation__spin="property: rotation; from: 0 0 0; to: 360 180 360; dur: 4500; loop: true; easing: linear">
+      </a-torus>
+      <a-sphere id="star-5" class="collectible" radius="0.22"
+        color="#F44336" emissive="#B71C1C" emissive-intensity="0.6"
+        shadow="cast: true" data-score="20"
+        animation__float="property: position; from: 0 0 0; to: 0 0.45 0; dur: 1000; dir: alternate; loop: true; easing: easeInOutSine"
+        animation__hover="property: scale; to: 1.6 1.6 1.6; startEvents: mouseenter; dur: 200; easing: easeOutBack"
+        animation__unhover="property: scale; to: 1 1 1; startEvents: mouseleave; dur: 200; easing: easeInBack">
+      </a-sphere>
+    </a-entity>
+
+
+    <!-- ══════════════════════════════════════════════════
+         ТЕКСТ В 3D-ПРОСТРАНСТВЕ
+         Два текстовых объекта внутри сцены:
+           1. Заголовок над ареной
+           2. Динамически обновляемый счёт (JS меняет value)
+    ══════════════════════════════════════════════════ -->
+
+    <!-- Заголовок игры над платформой -->
+    <a-text
+      id="arena-title"
+      value="★ Охота за Звёздами ★"
+      position="0 4.5 -5"
+      align="center"
+      color="#FFD700"
+      width="6"
+      font="mozillavr"
+      animation__sway="
+        property: rotation;
+        from: 0 -6 0;
+        to: 0 6 0;
+        dur: 4000;
+        dir: alternate;
+        loop: true;
+        easing: easeInOutSine">
+    </a-text>
+
+    <!-- Счёт в 3D — обновляется через JS -->
+    <a-text
+      id="score-3d"
+      value="Счёт: 0"
+      position="0 3.6 -5"
+      align="center"
+      color="#FFFFFF"
+      width="4"
+      font="mozillavr">
+    </a-text>
+
+    <!-- Подсказка внутри сцены -->
+    <a-text
+      id="hint-3d"
+      value="Наведи взгляд на звезду — она твоя!"
+      position="0 2.9 -4"
+      align="center"
+      color="#CCFFFF"
+      width="4.5"
+      opacity="0.8">
+    </a-text>
+
+  </a-entity><!-- /game-container -->
+
+
+  <!-- ══════════════════════════════════════════════════════
+       ПРЕПЯТСТВИЯ С ФИЗИКОЙ
+       ─────────────────────────────────────────────────────
+       dynamic-body — объект подчиняется физике (падает, отскакивает).
+       Кубы и сферы падают с высоты на статичную землю (static-body).
+       Игрок должен избегать попадания объектов — визуальный хаос.
+  ══════════════════════════════════════════════════════ -->
+
+  <!-- Падающий куб-препятствие 1 -->
+  <a-box
+    id="obstacle-1"
+    position="-3 9 -4"
+    width="0.55" height="0.55" depth="0.55"
+    color="#FF5722"
+    dynamic-body="mass: 1.2; linearDamping: 0.1; angularDamping: 0.15"
+    shadow="cast: true">
+  </a-box>
+
+  <!-- Падающий куб-препятствие 2 -->
+  <a-box
+    id="obstacle-2"
+    position="4 11 -5"
+    width="0.45" height="0.45" depth="0.45"
+    color="#E91E63"
+    dynamic-body="mass: 0.9; linearDamping: 0.08; angularDamping: 0.12"
+    shadow="cast: true">
+  </a-box>
+
+  <!-- Падающая сфера-препятствие -->
+  <a-sphere
+    id="obstacle-3"
+    position="1 13 -3"
+    radius="0.3"
+    color="#9C27B0"
+    dynamic-body="mass: 1.5; linearDamping: 0.05; angularDamping: 0.05"
+    shadow="cast: true">
+  </a-sphere>
+
+  <!-- Падающий цилиндр-препятствие -->
+  <a-cylinder
+    id="obstacle-4"
+    position="-1 15 -7"
+    radius="0.22" height="0.7"
+    color="#2196F3"
+    dynamic-body="mass: 1.0; linearDamping: 0.1; angularDamping: 0.2"
+    shadow="cast: true">
+  </a-cylinder>
+
+
+  <!-- ══════════════════════════════════════════════════════
+       АУДИО КОМПОНЕНТ
+       sound — воспроизводит фоновую музыку.
+       positional: false — звук слышен из любой точки сцены.
+  ══════════════════════════════════════════════════════ -->
+  <a-entity
+    id="audio-entity"
+    sound="src: #audio-bg; autoplay: true; loop: true; volume: 0.25; positional: false">
+  </a-entity>
+
+
+  <!-- ══════════════════════════════════════════════════════
+       КАМЕРА И УПРАВЛЕНИЕ ИГРОКОМ
+       ─────────────────────────────────────────────────────
+       #player — корневая точка игрока (высота 1.6 м над землёй).
+       wasd-controls — WASD-движение в горизонтальной плоскости.
+       look-controls — мышь/гироскоп для поворота взгляда.
+       Курсор (a-cursor) — «лазерный прицел» в центре экрана.
+  ══════════════════════════════════════════════════════ -->
+  <a-entity id="player" position="0 1.6 2">
+
+    <a-camera
+      id="main-camera"
+      look-controls="pointerLockEnabled: true"
+      wasd-controls="acceleration: 28; fly: false"
+      position="0 0 0">
+
+      <!--
+        Gaze-курсор:
+          fuse="true"         — активирует объект при удержании взгляда
+          fuse-timeout="1500" — 1.5 с до срабатывания
+          raycaster           — луч пересекается только с .collectible
+          animation__fusing   — курсор сжимается (обратная связь)
+          animation__click    — вспышка при клике
+      -->
+      <a-cursor
+        id="cursor"
+        color="#FFD700"
+        opacity="0.85"
+        fuse="true"
+        fuse-timeout="1500"
+        raycaster="objects: .collectible; far: 25; interval: 80"
+        animation__fusing="
+          property: scale;
+          startEvents: fusing;
+          from: 1 1 1;
+          to: 0.1 0.1 0.1;
+          dur: 1500;
+          easing: easeInCubic"
+        animation__click="
+          property: scale;
+          startEvents: click;
+          from: 0.1 0.1 0.1;
+          to: 1 1 1;
+          dur: 150"
+        animation__mouseleave="
+          property: scale;
+          startEvents: mouseleave;
+          to: 1 1 1;
+          dur: 120">
+      </a-cursor>
+
+      <!--
+        Текст-подсказка, прикреплённый к камере.
+        Это ПОТОМОК камеры — движется вместе с игроком,
+        всегда отображается в нижней части экрана.
+      -->
+      <a-text
+        id="camera-hint"
+        value="WASD движение  |  Наведи взгляд на ⭐ (1.5 с)"
+        position="0 -0.36 -1.1"
+        align="center"
+        color="rgba(220,220,220,0.7)"
+        width="2.4"
+        wrap-count="48">
+      </a-text>
+
+    </a-camera>
+  </a-entity>
+
+</a-scene><!-- /a-scene -->
+
+
+<!-- ══════════════════════════════════════════════════════════════
+     ИГРОВАЯ ЛОГИКА (JavaScript)
+══════════════════════════════════════════════════════════════ -->
+<script>
+  // ────────────────────────────────────────────────────────────
+  // СОСТОЯНИЕ ИГРЫ
+  // ────────────────────────────────────────────────────────────
+  var gameState = {
+    score:     0,   // текущий счёт очков
+    collected: 0,   // количество собранных звёзд
+    total:     0,   // общее количество звёзд на сцене
+    active:    false // true когда игра запущена
+  };
+
+  // ────────────────────────────────────────────────────────────
+  // ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ: Обновить все отображения счёта
+  // ────────────────────────────────────────────────────────────
+  function updateScoreDisplay() {
+    // 1. HTML-оверлей
+    document.getElementById('score-display').textContent     = gameState.score;
+    document.getElementById('collected-display').textContent = gameState.collected;
+    document.getElementById('total-display').textContent     = gameState.total;
+
+    // 2. Прогресс-полоска
+    var pct = gameState.total > 0
+      ? Math.round((gameState.collected / gameState.total) * 100)
+      : 0;
+    document.getElementById('progress-bar').style.width = pct + '%';
+
+    // 3. 3D-текст внутри сцены
+    var score3d = document.getElementById('score-3d');
+    if (score3d) {
+      score3d.setAttribute('value', 'Счёт: ' + gameState.score);
+    }
+  }
+
+  // ────────────────────────────────────────────────────────────
+  // СБОР ЗВЕЗДЫ
+  // Вызывается при клике (или fuse) по объекту .collectible
+  // ────────────────────────────────────────────────────────────
+  function collectStar(starEl) {
+    // Не обрабатывать уже собранную звезду
+    if (!starEl.getAttribute('visible') || starEl.dataset.collected) return;
+    starEl.dataset.collected = 'true';
+
+    // Количество очков за эту звезду (атрибут data-score)
+    var pts = parseInt(starEl.getAttribute('data-score') || '10', 10);
+    gameState.score     += pts;
+    gameState.collected += 1;
+
+    console.log('[Игра] Звезда собрана! +'  + pts + ' очков, итого: ' + gameState.score);
+
+    // Анимация исчезновения — сжать до нуля за 350 мс
+    starEl.setAttribute('animation__collect', {
+      property: 'scale',
+      to:       '0 0 0',
+      dur:      350,
+      easing:   'easeInBack'
+    });
+
+    // Скрыть всю группу после завершения анимации
+    setTimeout(function () {
+      var group = starEl.closest('.star-group');
+      if (group) group.setAttribute('visible', false);
+    }, 380);
+
+    // Обновить счёт
+    updateScoreDisplay();
+
+    // Изменить подсвет точечного источника при каждом сборе
+    var ptLight = document.getElementById('point-light');
+    if (ptLight) {
+      var colors = ['#FFD700', '#FF69B4', '#00BCD4', '#9C27B0', '#F44336'];
+      ptLight.setAttribute('color', colors[gameState.collected % colors.length]);
+    }
+
+    // Проверить конец игры
+    if (gameState.collected >= gameState.total) {
+      setTimeout(endGame, 600);
+    }
+  }
+
+  // ────────────────────────────────────────────────────────────
+  // ЗАВЕРШЕНИЕ ИГРЫ
+  // ────────────────────────────────────────────────────────────
+  function endGame() {
+    gameState.active = false;
+    console.log('[Игра] Игра завершена! Итоговый счёт: ' + gameState.score);
+
+    // Показать экран завершения
+    document.getElementById('final-score').textContent = gameState.score;
+    document.getElementById('game-over').classList.add('visible');
+
+    // Анимация смены неба — день → закат
+    var sky = document.getElementById('game-sky');
+    if (sky) {
+      sky.setAttribute('animation__sunset', {
+        property: 'material.color',
+        to:       '#FF4500',
+        dur:      3000,
+        easing:   'easeInOutQuad'
+      });
+    }
+
+    // Спрятать подсказку
+    var hint = document.getElementById('hint');
+    if (hint) hint.style.display = 'none';
+  }
+
+  // ────────────────────────────────────────────────────────────
+  // ПЕРЕЗАПУСК ИГРЫ
+  // ────────────────────────────────────────────────────────────
+  function restartGame() {
+    console.log('[Игра] Перезапуск...');
+
+    // Скрыть экран завершения
+    document.getElementById('game-over').classList.remove('visible');
+
+    // Восстановить все звёзды
+    document.querySelectorAll('.star-group').forEach(function (group) {
+      group.setAttribute('visible', true);
+      var star = group.querySelector('.collectible');
+      if (star) {
+        star.setAttribute('scale', '1 1 1');
+        star.removeAttribute('animation__collect');
+        delete star.dataset.collected;
+      }
+    });
+
+    // Восстановить небо
+    var sky = document.getElementById('game-sky');
+    if (sky) {
+      sky.removeAttribute('animation__sunset');
+      sky.setAttribute('material', 'color: #ffffff');
+    }
+
+    // Восстановить подсказку
+    var hint = document.getElementById('hint');
+    if (hint) hint.style.display = '';
+
+    // Сброс состояния
+    gameState.score     = 0;
+    gameState.collected = 0;
+    gameState.active    = true;
+    updateScoreDisplay();
+  }
+
+  // ────────────────────────────────────────────────────────────
+  // ИНИЦИАЛИЗАЦИЯ: запускается после полной загрузки сцены
+  // ────────────────────────────────────────────────────────────
+  document.querySelector('a-scene').addEventListener('loaded', function () {
+    console.log('[Игра] Сцена A-Frame полностью загружена.');
+
+    // Посчитать все коллекционные объекты
+    var stars = document.querySelectorAll('.collectible');
+    gameState.total  = stars.length;
+    gameState.active = true;
+    updateScoreDisplay();
+
+    console.log('[Игра] Всего звёзд: ' + gameState.total);
+
+    // Навесить обработчики событий на каждую звезду
+    stars.forEach(function (star) {
+
+      // ── click: срабатывает и от мыши, и от fuse-курсора ──
+      star.addEventListener('click', function () {
+        if (!gameState.active) return;
+        console.log('[Игра] Клик по: ' + this.id);
+        collectStar(this);
+      });
+
+      // ── fusing: взгляд «заряжается» на объекте ──────────
+      star.addEventListener('fusing', function () {
+        console.log('[Игра] Начат сбор взглядом: ' + this.id);
+        // Дополнительный визуальный отклик — увеличить эмиссию
+        this.setAttribute('emissive-intensity', '1.0');
+      });
+
+      // ── mouseleave: взгляд ушёл, отменить зарядку ───────
+      star.addEventListener('mouseleave', function () {
+        this.setAttribute('emissive-intensity', '0.6');
+      });
+    });
+
+    console.log('[Игра] Обработчики событий установлены. Игра начата!');
+  });
+</script>
+
+</body>
+</html>
