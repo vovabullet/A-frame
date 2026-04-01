@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<!--
+  ╔══════════════════════════════════════════════════════════════════════╗
+  ║  AR ВЕРСИЯ — A-Frame + AR.js + GPS координаты                      ║
+  ║  Лаб/работа 6 (задание 5): видеокамера + GPS + AR.js               ║
+  ║                                                                      ║
+  ║  Технологии:                                                         ║
+  ║  • AR.js  — библиотека дополненной реальности для браузера           ║
+  ║  • a-frame — 3D/VR фреймворк                                        ║
+  ║  • GPS API — геолокация через Geolocation API браузера              ║
+  ║  • gps-camera / gps-entity-place — GPS-компоненты AR.js            ║
+  ║                                                                      ║
+  ║  Принцип работы:                                                     ║
+  ║  1. Браузер запрашивает доступ к камере устройства (видеопоток)     ║
+  ║  2. AR.js накладывает 3D-объекты поверх видео                       ║
+  ║  3. gps-camera отслеживает GPS-позицию и компас                     ║
+  ║  4. gps-entity-place размещает объекты по координатам (lat/lon)     ║
+  ║  5. Объекты появляются, когда камера направлена в их сторону        ║
+  ║                                                                      ║
+  ║  Требования:                                                         ║
+  ║  • HTTPS-соединение (обязательно для GPS и камеры)                  ║
+  ║  • Мобильное устройство с GPS (или ноутбук с GPS-модулем)           ║
+  ║  • Разрешение в браузере на использование камеры и геолокации       ║
+  ╚══════════════════════════════════════════════════════════════════════╝
+-->
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport"
+    content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>AR + GPS — A-Frame + AR.js</title>
+
+  <!--
+    A-Frame версия 1.3.0 — указана конкретная версия,
+    проверенная на совместимость с AR.js 3.x
+  -->
+  <script src="https://aframe.io/releases/1.3.0/aframe.min.js"></script>
+
+  <!--
+    AR.js: библиотека дополненной реальности.
+    Включает:
+      • Поддержку маркеров (Hiro, Kanji, собственные)
+      • GPS-компоненты: gps-camera, gps-entity-place
+      • Работу с видеокамерой устройства
+    Версия 3.4.5 — стабильная, с поддержкой aframe 1.3
+  -->
+  <script src="https://cdn.jsdelivr.net/npm/ar.js@3.4.5/aframe/build/aframe-ar.js"></script>
+
+  <!--
+    look-at-component: компонент для поворота 3D-объектов
+    лицом к камере (полезно для GPS-маркеров и табличек)
+  -->
+  <script src="https://unpkg.com/aframe-look-at-component@0.8.0/dist/aframe-look-at-component.min.js"></script>
+
+  <style>
+    /* Убираем прокрутку и отступы — AR занимает весь экран */
+    html, body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      width: 100%;
+      height: 100%;
+      background: #000;
+    }
+
+    /* ── Панель GPS-информации (снизу экрана) ────────────── */
+    #gps-panel {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      z-index: 1000;
+      background: rgba(0, 0, 0, 0.72);
+      color: #fff;
+      font-family: 'Arial', sans-serif;
+      font-size: 13px;
+      padding: 10px 16px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    #gps-panel .gps-title {
+      font-size: 11px;
+      color: #aaa;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    #gps-panel .gps-coords {
+      color: #00FF88;
+      font-weight: bold;
+      font-size: 15px;
+    }
+    #gps-panel .gps-accuracy {
+      color: #FFD700;
+      font-size: 12px;
+    }
+    #gps-panel .gps-error {
+      color: #FF5252;
+    }
+
+    /* ── Список точек интереса (POI) ─────────────────────── */
+    #poi-list {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 1000;
+      background: rgba(0, 0, 0, 0.65);
+      color: #fff;
+      font-family: 'Arial', sans-serif;
+      font-size: 12px;
+      padding: 8px 14px;
+    }
+    #poi-list .poi-item {
+      display: flex;
+      justify-content: space-between;
+      padding: 3px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+    }
+    #poi-list .poi-name { color: #FFDD57; }
+    #poi-list .poi-dist { color: #69D2FF; font-weight: bold; }
+
+    /* ── Индикатор загрузки ───────────────────────────────── */
+    #loading-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 2000;
+      background: rgba(0,0,0,0.92);
+      color: #fff;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      font-family: Arial, sans-serif;
+      text-align: center;
+      padding: 20px;
+      gap: 16px;
+    }
+    #loading-overlay h2 { color: #FFD700; font-size: 24px; }
+    #loading-overlay p  { color: #ccc; font-size: 14px; line-height: 1.6; max-width: 340px; }
+    #loading-overlay .spinner {
+      width: 48px; height: 48px;
+      border: 5px solid rgba(255,215,0,0.2);
+      border-top-color: #FFD700;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #loading-overlay button {
+      background: #FFD700; color: #000; border: none;
+      padding: 12px 28px; font-size: 16px; font-weight: bold;
+      border-radius: 8px; cursor: pointer; margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════════════
+     ЭКРАН ЗАГРУЗКИ — объясняет пользователю что нужно
+══════════════════════════════════════════════════════ -->
+<div id="loading-overlay">
+  <div class="spinner"></div>
+  <h2>📍 AR + GPS</h2>
+  <p>
+    Для работы AR необходимо:<br>
+    📷 Разрешить доступ к <strong>камере</strong><br>
+    🌐 Разрешить доступ к <strong>геолокации</strong><br><br>
+    После разрешений нажмите «Начать»
+  </p>
+  <button onclick="startAR()">▶ Начать AR</button>
+  <p style="font-size:11px; color:#888; max-width:280px">
+    ⚠ Требуется HTTPS и мобильное устройство с GPS.
+    На ПК геолокация может быть недоступна.
+  </p>
+</div>
+
+<!-- ══════════════════════════════════════════════════════
+     ПАНЕЛЬ GPS-ИНФОРМАЦИИ
+══════════════════════════════════════════════════════ -->
+<div id="gps-panel">
+  <div class="gps-title">📍 Ваши GPS-координаты</div>
+  <div class="gps-coords" id="user-coords">Ожидание разрешения...</div>
+  <div class="gps-accuracy" id="user-accuracy"></div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════
+     СПИСОК ТОЧЕК ИНТЕРЕСА (дистанции обновляются)
+══════════════════════════════════════════════════════ -->
+<div id="poi-list">
+  <div class="poi-item">
+    <span class="poi-name">🏛 Красная пл. (Москва)</span>
+    <span class="poi-dist" id="dist-0">---</span>
+  </div>
+  <div class="poi-item">
+    <span class="poi-name">🏛 Эрмитаж (СПб)</span>
+    <span class="poi-dist" id="dist-1">---</span>
+  </div>
+  <div class="poi-item">
+    <span class="poi-name">🎭 Большой Театр (Москва)</span>
+    <span class="poi-dist" id="dist-2">---</span>
+  </div>
+  <div class="poi-item">
+    <span class="poi-name">🗼 Эйфелева башня (Париж)</span>
+    <span class="poi-dist" id="dist-3">---</span>
+  </div>
+  <div class="poi-item">
+    <span class="poi-name">🗽 Статуя Свободы (Нью-Йорк)</span>
+    <span class="poi-dist" id="dist-4">---</span>
+  </div>
+</div>
+
+
+<!-- ╔══════════════════════════════════════════════════════════════════╗
+     ║                     AR-СЦЕНА A-FRAME                           ║
+     ║                                                                  ║
+     ║  arjs="sourceType: webcam"                                      ║
+     ║    — использует ВИДЕОКАМЕРУ устройства как фон AR               ║
+     ║  arjs="debugUIEnabled: false"                                   ║
+     ║    — скрывает отладочный UI AR.js                               ║
+     ║  embedded                                                        ║
+     ║    — убирает кнопку полного экрана A-Frame                      ║
+     ║  renderer="logarithmicDepthBuffer: true"                        ║
+     ║    — улучшает точность глубины для AR-наложений                 ║
+     ║  vr-mode-ui="enabled: false"                                    ║
+     ║    — отключает VR-кнопку (мы работаем в AR, не VR)             ║
+     ╚══════════════════════════════════════════════════════════════════╝ -->
+<a-scene
+  id="ar-scene"
+  arjs="sourceType: webcam; debugUIEnabled: false; detectionMode: mono_and_matrix; matrixCodeType: 3x3;"
+  embedded
+  renderer="logarithmicDepthBuffer: true; precision: medium;"
+  vr-mode-ui="enabled: false"
+  loading-screen="enabled: false">
+
+  <!-- ══════════════════════════════════════════════════
+       РЕСУРСЫ AR-СЦЕНЫ
+  ══════════════════════════════════════════════════ -->
+  <a-assets>
+    <!-- Изображение-спрайт для маркеров POI -->
+    <img
+      id="ar-star"
+      src="https://upload.wikimedia.org/wikipedia/commons/thumb/2/29/Gold_star.svg/240px-Gold_star.svg.png"
+      crossorigin="anonymous">
+  </a-assets>
+
+
+  <!-- ══════════════════════════════════════════════════════
+       GPS-ОБЪЕКТЫ: gps-entity-place
+       ─────────────────────────────────────────────────────
+       Каждый <a-entity gps-entity-place="..."> размещается
+       AR.js в точке с заданными GPS-координатами.
+       Объект виден только когда камера повёрнута в его сторону.
+
+       look-at="[gps-camera]" — объект всегда смотрит на игрока.
+  ══════════════════════════════════════════════════════ -->
+
+  <!-- ── POI 0: Красная площадь, Москва ─────────────────── -->
+  <a-entity
+    id="poi-entity-0"
+    gps-entity-place="latitude: 55.7539; longitude: 37.6208"
+    look-at="[gps-camera]"
+    scale="10 10 10">
+
+    <!-- Вращающийся куб-маркер -->
+    <a-box
+      position="0 0 0"
+      width="0.6" height="0.6" depth="0.6"
+      color="#FFD700"
+      opacity="0.92"
+      animation__spin="property: rotation; from: 0 0 0; to: 0 360 0; dur: 3000; loop: true; easing: linear">
+    </a-box>
+
+    <!-- Информационная табличка -->
+    <a-entity position="0 0.9 0">
+      <a-plane
+        width="2.2" height="0.7"
+        color="#000000"
+        opacity="0.75">
+      </a-plane>
+      <a-text
+        value="📍 Красная площадь\nМосква, Россия"
+        align="center"
+        color="#FFD700"
+        width="4.5"
+        wrap-count="28"
+        position="0 0 0.01">
+      </a-text>
+    </a-entity>
+
+    <!-- Расстояние (обновляется JS) -->
+    <a-text
+      id="ar-dist-0"
+      value="↕ ..."
+      position="0 -0.6 0"
+      align="center"
+      color="#00FF88"
+      width="3">
+    </a-text>
+  </a-entity>
+
+  <!-- ── POI 1: Эрмитаж, Санкт-Петербург ───────────────── -->
+  <a-entity
+    id="poi-entity-1"
+    gps-entity-place="latitude: 59.9398; longitude: 30.3146"
+    look-at="[gps-camera]"
+    scale="10 10 10">
+
+    <!-- Парящая сфера-маркер -->
+    <a-sphere
+      radius="0.35"
+      color="#69D2FF"
+      opacity="0.92"
+      animation__float="property: position; from: 0 0 0; to: 0 0.5 0; dur: 1500; dir: alternate; loop: true; easing: easeInOutSine"
+      animation__spin="property: rotation; from: 0 0 0; to: 0 360 0; dur: 4000; loop: true; easing: linear">
+    </a-sphere>
+
+    <a-entity position="0 0.9 0">
+      <a-plane width="2.2" height="0.7" color="#000" opacity="0.75"></a-plane>
+      <a-text
+        value="🏛 Государственный Эрмитаж\nСанкт-Петербург"
+        align="center" color="#69D2FF" width="4.5" wrap-count="28"
+        position="0 0 0.01">
+      </a-text>
+    </a-entity>
+    <a-text id="ar-dist-1" value="↕ ..." position="0 -0.6 0" align="center" color="#00FF88" width="3"></a-text>
+  </a-entity>
+
+  <!-- ── POI 2: Большой Театр, Москва ──────────────────── -->
+  <a-entity
+    id="poi-entity-2"
+    gps-entity-place="latitude: 55.7601; longitude: 37.6186"
+    look-at="[gps-camera]"
+    scale="10 10 10">
+
+    <a-cylinder
+      radius="0.3" height="0.7"
+      color="#FF69B4"
+      opacity="0.92"
+      animation__spin="property: rotation; from: 0 0 0; to: 360 360 0; dur: 4500; loop: true; easing: linear">
+    </a-cylinder>
+
+    <a-entity position="0 0.9 0">
+      <a-plane width="2.2" height="0.7" color="#000" opacity="0.75"></a-plane>
+      <a-text
+        value="🎭 Большой Театр\nМосква, Россия"
+        align="center" color="#FF69B4" width="4.5" wrap-count="28"
+        position="0 0 0.01">
+      </a-text>
+    </a-entity>
+    <a-text id="ar-dist-2" value="↕ ..." position="0 -0.6 0" align="center" color="#00FF88" width="3"></a-text>
+  </a-entity>
+
+  <!-- ── POI 3: Эйфелева башня, Париж ─────────────────── -->
+  <a-entity
+    id="poi-entity-3"
+    gps-entity-place="latitude: 48.8584; longitude: 2.2945"
+    look-at="[gps-camera]"
+    scale="10 10 10">
+
+    <a-torus
+      radius="0.35" radius-tubular="0.05"
+      color="#FFA500"
+      opacity="0.92"
+      animation__spin="property: rotation; from: 0 0 0; to: 360 0 360; dur: 3800; loop: true; easing: linear">
+    </a-torus>
+
+    <a-entity position="0 0.9 0">
+      <a-plane width="2.2" height="0.7" color="#000" opacity="0.75"></a-plane>
+      <a-text
+        value="🗼 Эйфелева Башня\nПариж, Франция"
+        align="center" color="#FFA500" width="4.5" wrap-count="28"
+        position="0 0 0.01">
+      </a-text>
+    </a-entity>
+    <a-text id="ar-dist-3" value="↕ ..." position="0 -0.6 0" align="center" color="#00FF88" width="3"></a-text>
+  </a-entity>
+
+  <!-- ── POI 4: Статуя Свободы, Нью-Йорк ──────────────── -->
+  <a-entity
+    id="poi-entity-4"
+    gps-entity-place="latitude: 40.6892; longitude: -74.0445"
+    look-at="[gps-camera]"
+    scale="10 10 10">
+
+    <a-cone
+      radius-bottom="0.4" radius-top="0" height="0.8"
+      color="#90EE90"
+      opacity="0.92"
+      animation__spin="property: rotation; from: 0 0 0; to: 0 360 0; dur: 5000; loop: true; easing: linear">
+    </a-cone>
+
+    <a-entity position="0 1.0 0">
+      <a-plane width="2.2" height="0.7" color="#000" opacity="0.75"></a-plane>
+      <a-text
+        value="🗽 Статуя Свободы\nНью-Йорк, США"
+        align="center" color="#90EE90" width="4.5" wrap-count="28"
+        position="0 0 0.01">
+      </a-text>
+    </a-entity>
+    <a-text id="ar-dist-4" value="↕ ..." position="0 -0.7 0" align="center" color="#00FF88" width="3"></a-text>
+  </a-entity>
+
+
+  <!-- ══════════════════════════════════════════════════════
+       GPS КАМЕРА
+       ─────────────────────────────────────────────────────
+       gps-camera     — основной компонент AR.js для GPS-AR.
+                         Читает GPS-координаты устройства и
+                         компас (orientation), ориентирует сцену
+                         так, чтобы GPS-объекты оказались
+                         в правильном направлении.
+
+       rotation-reader — помогает AR.js корректно читать
+                         ориентацию устройства (DeviceOrientation API).
+
+       Видеопоток с камеры устройства используется как
+       фон AR-сцены (задаётся через arjs="sourceType: webcam").
+  ══════════════════════════════════════════════════════ -->
+  <a-camera
+    id="ar-camera"
+    gps-camera
+    rotation-reader>
+  </a-camera>
+
+</a-scene><!-- /a-scene -->
+
+
+<!-- ══════════════════════════════════════════════════════════════
+     GPS и AR ЛОГИКА (JavaScript)
+══════════════════════════════════════════════════════════════ -->
+<script>
+  // ────────────────────────────────────────────────────────────
+  // ТОЧКИ ИНТЕРЕСА (Points of Interest)
+  // Массив объектов с GPS-координатами, названиями и ID-элементов
+  // ────────────────────────────────────────────────────────────
+  var POI_LIST = [
+    {
+      id: 'poi-entity-0',
+      distPanelId: 'dist-0',
+      arDistId:    'ar-dist-0',
+      name:        'Красная площадь',
+      lat:         55.7539,
+      lng:         37.6208
+    },
+    {
+      id: 'poi-entity-1',
+      distPanelId: 'dist-1',
+      arDistId:    'ar-dist-1',
+      name:        'Эрмитаж',
+      lat:         59.9398,
+      lng:         30.3146
+    },
+    {
+      id: 'poi-entity-2',
+      distPanelId: 'dist-2',
+      arDistId:    'ar-dist-2',
+      name:        'Большой Театр',
+      lat:         55.7601,
+      lng:         37.6186
+    },
+    {
+      id: 'poi-entity-3',
+      distPanelId: 'dist-3',
+      arDistId:    'ar-dist-3',
+      name:        'Эйфелева башня',
+      lat:         48.8584,
+      lng:         2.2945
+    },
+    {
+      id: 'poi-entity-4',
+      distPanelId: 'dist-4',
+      arDistId:    'ar-dist-4',
+      name:        'Статуя Свободы',
+      lat:         40.6892,
+      lng:         -74.0445
+    }
+  ];
+
+  // ────────────────────────────────────────────────────────────
+  // ФОРМУЛА ГАВЕРСИНУСА (Haversine Formula)
+  // Вычисляет расстояние между двумя GPS-точками на сфере Земли.
+  //
+  // Параметры:
+  //   lat1, lon1 — широта и долгота первой точки (в градусах)
+  //   lat2, lon2 — широта и долгота второй точки (в градусах)
+  //
+  // Возвращает:
+  //   Расстояние в метрах
+  // ────────────────────────────────────────────────────────────
+  function haversineDistance(lat1, lon1, lat2, lon2) {
+    var R     = 6371000;                     // Радиус Земли в метрах
+    var toRad = Math.PI / 180;               // Коэффициент градусы → радианы
+
+    var dLat = (lat2 - lat1) * toRad;       // Разность широт в радианах
+    var dLon = (lon2 - lon1) * toRad;       // Разность долгот в радианах
+
+    // a = sin²(Δlat/2) + cos(lat1)*cos(lat2)*sin²(Δlon/2)
+    var a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * toRad) * Math.cos(lat2 * toRad) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+
+    // c = 2 * atan2(√a, √(1−a))  — центральный угол в радианах
+    var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+    return R * c;  // Дуговое расстояние = радиус × угол
+  }
+
+  // ────────────────────────────────────────────────────────────
+  // ФОРМАТИРОВАНИЕ РАССТОЯНИЯ
+  // Короткое: "345 м" или "12.4 км"
+  // ────────────────────────────────────────────────────────────
+  function formatDist(meters) {
+    if (meters < 1000) {
+      return Math.round(meters) + ' м';
+    }
+    return (meters / 1000).toFixed(1) + ' км';
+  }
+
+  // ────────────────────────────────────────────────────────────
+  // ОБНОВЛЕНИЕ ДИСТАНЦИЙ ПО ТЕКУЩИМ КООРДИНАТАМ ПОЛЬЗОВАТЕЛЯ
+  // ────────────────────────────────────────────────────────────
+  function updateDistances(userLat, userLng) {
+    POI_LIST.forEach(function (poi) {
+      var distM  = haversineDistance(userLat, userLng, poi.lat, poi.lng);
+      var distStr = formatDist(distM);
+
+      // Обновить панель POI-списка
+      var panelEl = document.getElementById(poi.distPanelId);
+      if (panelEl) panelEl.textContent = distStr;
+
+      // Обновить 3D-текст расстояния в AR-сцене
+      var arEl = document.getElementById(poi.arDistId);
+      if (arEl) arEl.setAttribute('value', '↕ ' + distStr);
+
+      console.log('[GPS] ' + poi.name + ': ' + distStr);
+    });
+  }
+
+  // ────────────────────────────────────────────────────────────
+  // GPS СЛЕЖЕНИЕ
+  // watchPosition — непрерывно отслеживает позицию устройства
+  // ────────────────────────────────────────────────────────────
+  var gpsWatchId = null;  // ID наблюдателя (для остановки)
+
+  function startGPSTracking() {
+    if (!('geolocation' in navigator)) {
+      // Геолокация недоступна в этом браузере
+      document.getElementById('user-coords').textContent = '⚠ GPS недоступен';
+      document.getElementById('user-coords').className   = 'gps-error';
+      console.warn('[GPS] Геолокация не поддерживается браузером');
+      return;
+    }
+
+    console.log('[GPS] Запуск слежения за координатами...');
+
+    // Показываем "ожидание"
+    document.getElementById('user-coords').textContent = 'Получение координат...';
+
+    gpsWatchId = navigator.geolocation.watchPosition(
+
+      // ── Успех: новые координаты получены ──────────────────
+      function (position) {
+        var lat = position.coords.latitude;
+        var lng = position.coords.longitude;
+        var acc = position.coords.accuracy;      // Погрешность в метрах
+        var alt = position.coords.altitude;      // Высота (может быть null)
+
+        console.log(
+          '[GPS] Позиция: ' + lat.toFixed(6) + ', ' + lng.toFixed(6) +
+          ' | Точность: ±' + Math.round(acc) + ' м'
+        );
+
+        // Обновить отображение координат
+        document.getElementById('user-coords').textContent =
+          lat.toFixed(5) + '° с.ш., ' + lng.toFixed(5) + '° в.д.';
+        document.getElementById('user-accuracy').textContent =
+          '±' + Math.round(acc) + ' м точность' +
+          (alt !== null ? ' | высота: ' + Math.round(alt) + ' м' : '');
+
+        // Пересчитать расстояния до всех POI
+        updateDistances(lat, lng);
+      },
+
+      // ── Ошибка: геолокация не дала результат ──────────────
+      function (err) {
+        var messages = {};
+        messages[err.PERMISSION_DENIED]    = '⚠ Доступ к GPS запрещён пользователем';
+        messages[err.POSITION_UNAVAILABLE] = '⚠ GPS-сигнал недоступен';
+        messages[err.TIMEOUT]              = '⚠ Превышено время ожидания GPS';
+
+        var msg = messages[err.code] || '⚠ Ошибка GPS: ' + err.message;
+        console.error('[GPS] Ошибка: ' + msg + ' (код ' + err.code + ')');
+
+        document.getElementById('user-coords').textContent = msg;
+        document.getElementById('user-coords').className   = 'gps-error';
+      },
+
+      // ── Настройки геолокации ──────────────────────────────
+      {
+        enableHighAccuracy: true,   // Использовать GPS-чип (точнее, но медленнее)
+        maximumAge:         0,      // Не использовать кешированные координаты
+        timeout:            15000   // Таймаут 15 секунд
+      }
+    );
+
+    console.log('[GPS] Слежение запущено, watchId=' + gpsWatchId);
+  }
+
+  // ────────────────────────────────────────────────────────────
+  // ЗАПУСК AR (кнопка "Начать AR")
+  // Скрывает экран загрузки и запускает GPS-слежение
+  // ────────────────────────────────────────────────────────────
+  function startAR() {
+    console.log('[AR] Запуск AR-режима...');
+
+    // Скрыть экран загрузки
+    var overlay = document.getElementById('loading-overlay');
+    if (overlay) overlay.style.display = 'none';
+
+    // Запустить GPS
+    startGPSTracking();
+  }
+
+  // ────────────────────────────────────────────────────────────
+  // ОБРАБОТЧИКИ AR-СОБЫТИЙ
+  // ────────────────────────────────────────────────────────────
+
+  // Сцена загружена — AR.js готов к работе
+  document.querySelector('a-scene').addEventListener('loaded', function () {
+    console.log('[AR] A-Frame + AR.js сцена загружена');
+    console.log('[AR] Видеокамера: sourceType=webcam');
+    console.log('[AR] GPS-компоненты: gps-camera, gps-entity-place активны');
+  });
+
+  // Добавить интерактивность к GPS-объектам
+  document.querySelectorAll('[gps-entity-place]').forEach(function (entity, index) {
+    // При нажатии на объект — анимация масштабирования
+    entity.addEventListener('click', function () {
+      console.log('[AR] Нажатие на GPS-объект: ' + this.id);
+      this.setAttribute('animation__tap', {
+        property: 'scale',
+        from:     '10 10 10',
+        to:       '15 15 15',
+        dur:      300,
+        dir:      'alternate',
+        easing:   'easeOutBack'
+      });
+    });
+
+    // GPS-объект найден и отображается в камере
+    entity.addEventListener('gps-entity-place-added', function () {
+      console.log('[AR] GPS-объект добавлен в сцену: ' + this.id);
+    });
+  });
+
+  // ────────────────────────────────────────────────────────────
+  // ИНФОРМАЦИЯ ДЛЯ ОТЛАДКИ (DeviceOrientation)
+  // Компас устройства — используется AR.js для ориентации
+  // ────────────────────────────────────────────────────────────
+  if ('DeviceOrientationEvent' in window) {
+    window.addEventListener('deviceorientation', function (e) {
+      // e.alpha — поворот вокруг Z (компас, 0=север)
+      // e.beta  — наклон вперёд/назад
+      // e.gamma — наклон влево/вправо
+      // Логируем редко, чтобы не засорять консоль
+    }, { once: true }); // Только первое событие для проверки поддержки
+    console.log('[AR] DeviceOrientationEvent поддерживается');
+  } else {
+    console.warn('[AR] DeviceOrientationEvent НЕ поддерживается — компас недоступен');
+  }
+</script>
+
+</body>
+</html>
